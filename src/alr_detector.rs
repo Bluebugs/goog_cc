@@ -8,7 +8,6 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-use std::time::Instant;
 
 use crate::{experiments::AlrExperimentSettings, pacing::IntervalBudget};
 
@@ -52,8 +51,6 @@ pub struct AlrDetector {
     alr_budget: IntervalBudget,
     alr_started_time_ms: Option<i64>,
 
-    // Replacement for rtc_time
-    start: Instant,
 }
 
 impl Default for AlrDetector {
@@ -69,7 +66,6 @@ impl AlrDetector {
             last_send_time_ms: None,
             alr_budget: IntervalBudget::new(0, true),
             alr_started_time_ms: None,
-            start: Instant::now(),
         }
     }
 
@@ -92,8 +88,9 @@ impl AlrDetector {
         if self.alr_budget.budget_ratio() > self.conf.start_budget_level_ratio
             && self.alr_started_time_ms.is_none()
         {
-            self.alr_started_time_ms
-                .replace(self.start.elapsed().as_millis() as i64);
+            // Stamp with the caller's clock, the same one that feeds the probe
+            // controller, never the wall clock.
+            self.alr_started_time_ms.replace(send_time_ms);
         } else if self.alr_budget.budget_ratio() < self.conf.stop_budget_level_ratio
             && self.alr_started_time_ms.is_some()
         {
@@ -341,5 +338,32 @@ mod test {
                 .get_application_limited_region_start_time()
                 .is_some())
         );
+    }
+
+    // The ALR start time must come from the caller's timestamps, so two runs
+    // that differ only by a constant clock offset (or by wall-clock stalls)
+    // see start times that differ by exactly that offset.
+    #[test]
+    fn alr_start_time_follows_caller_clock() {
+        let run = |base_ms: i64| -> i64 {
+            let mut d = AlrDetector::default();
+            d.set_estimated_bitrate(ESTIMATED_BITRATE_BPS);
+            let mut ts = base_ms;
+            SimulateOutgoingTrafficIn::new(&mut d, &mut ts)
+                .for_time_ms(1000)
+                .at_percent_of_estimated_bitrate(100);
+            assert!(d.get_application_limited_region_start_time().is_none());
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            SimulateOutgoingTrafficIn::new(&mut d, &mut ts)
+                .for_time_ms(1000)
+                .at_percent_of_estimated_bitrate(20);
+            let start = d
+                .get_application_limited_region_start_time()
+                .expect("ALR started");
+            assert!(start >= base_ms, "start {start} predates caller clock {base_ms}");
+            start - base_ms
+        };
+        assert_eq!(run(1_000), run(5_000_000_000));
+        assert!(run(5_000_000_000) >= 1000);
     }
 }
