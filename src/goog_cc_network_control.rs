@@ -207,6 +207,13 @@ impl GoogCcNetworkController {
         }
     }
 
+    /// The state of the loss based estimator: `Increasing`, `IncreaseUsingPadding`
+    /// or `Decreasing` while the estimate is loss limited, `DelayBasedEstimate`
+    /// when it follows the delay based estimate.
+    pub fn loss_based_state(&self) -> LossBasedState {
+        self.bandwidth_estimation.loss_based_state()
+    }
+
     pub fn get_network_state(&self, at_time: Timestamp) -> NetworkControlUpdate {
         NetworkControlUpdate {
             target_rate: Some(TargetTransferRate {
@@ -1202,6 +1209,15 @@ mod test {
         let goog_cc_config = GoogCcConfig { feedback_only };
 
         GoogCcNetworkController::new(config, goog_cc_config)
+    }
+
+    #[test]
+    fn loss_based_state_is_delay_based_before_any_loss() {
+        let controller = create_controller(FieldTrials::default(), false);
+        assert_eq!(
+            controller.loss_based_state(),
+            LossBasedState::DelayBasedEstimate
+        );
     }
 
     #[test]

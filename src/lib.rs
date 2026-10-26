@@ -77,7 +77,7 @@ pub use {
     alr_detector::AlrDetectorConfig, bitrate_estimator::BitrateEstimatorConfig,
     send_side_bandwidth_estimation::BweLossExperiment,
     delay_based_bwe::BweSeparateAudioPacketsSettings,
-    loss_based_bwe_v2::LossBasedBweV2Config,
+    loss_based_bwe_v2::{LossBasedBweV2Config, LossBasedState},
     loss_based_bandwidth_estimation::LossBasedControlConfig,
     probe_controller::ProbeControllerConfig,
     robust_throughput_estimator::RobustThroughputEstimatorSettings,
