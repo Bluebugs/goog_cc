@@ -868,8 +868,23 @@ impl LossBasedBweV2 {
             && self.loss_based_result.state != LossBasedState::DelayBasedEstimate
     }
 
-    // For unit testing only.
-    #[cfg(test)]
+    // Continues the loss limited estimate from `bandwidth_estimate`, for a caller
+    // that knows the rate better than the estimator (a reset of the send rate).
+    //
+    // Only while the estimator is not limiting (state `DelayBasedEstimate`),
+    // where its output is the delay based estimate by construction, so moving
+    // it is exact. In a limited state (Decreasing, Increasing) the limit and
+    // the state are kept: the loss evidence they stand for is not the
+    // caller's to override. Before the estimator has been initialised from
+    // the first delay based estimate this is a no-op as well.
+    pub fn reseed_bandwidth_estimate(&mut self, bandwidth_estimate: DataRate) {
+        if self.current_best_estimate.loss_limited_bandwidth.is_finite()
+            && self.loss_based_result.state == LossBasedState::DelayBasedEstimate
+        {
+            self.set_bandwidth_estimate(bandwidth_estimate);
+        }
+    }
+
     pub fn set_bandwidth_estimate(&mut self, bandwidth_estimate: DataRate) {
         if bandwidth_estimate.is_finite() {
             self.current_best_estimate.loss_limited_bandwidth = bandwidth_estimate;
@@ -1649,6 +1664,59 @@ mod test {
             .get_loss_based_result()
             .bandwidth_estimate
             .is_finite());
+    }
+
+    #[test]
+    fn reseed_moves_the_estimate_only_when_initialized_and_not_limiting() {
+        let mut test = LossBasedBweV2Test::default();
+        let enough_feedback: Vec<PacketResult> = test.create_packet_results_with_received_packets(
+            /*first_packet_timestamp=*/ Timestamp::zero(),
+        );
+        let mut estimator = LossBasedBweV2::new(config(true, true));
+
+        // Uninitialized: left for the first delay based estimate to set.
+        estimator.reseed_bandwidth_estimate(DataRate::from_kilobits_per_sec(900));
+        estimator.update_bandwidth_estimate(
+            &enough_feedback,
+            /*delay_based_estimate=*/ DataRate::plus_infinity(),
+            /*in_alr=*/ false,
+        );
+        assert!(!estimator.is_ready());
+
+        // Initialized and not limiting: the reseed takes.
+        estimator.set_bandwidth_estimate(DataRate::from_kilobits_per_sec(600));
+        estimator.reseed_bandwidth_estimate(DataRate::from_kilobits_per_sec(900));
+        estimator.update_bandwidth_estimate(
+            &enough_feedback,
+            /*delay_based_estimate=*/ DataRate::plus_infinity(),
+            /*in_alr=*/ false,
+        );
+        assert!(estimator.is_ready());
+        assert!(
+            estimator.get_loss_based_result().bandwidth_estimate
+                >= DataRate::from_kilobits_per_sec(850)
+        );
+    }
+
+    #[test]
+    fn reseed_in_a_limited_state_keeps_the_state_and_the_limit() {
+        let mut estimator = LossBasedBweV2::new(config(true, true));
+        estimator.set_bandwidth_estimate(DataRate::from_kilobits_per_sec(600));
+        // A limited state, as update_bandwidth_estimate leaves it under loss.
+        estimator.loss_based_result = LossBasedBweV2Result {
+            bandwidth_estimate: DataRate::from_kilobits_per_sec(400),
+            state: LossBasedState::Decreasing,
+        };
+        estimator.current_best_estimate.loss_limited_bandwidth =
+            DataRate::from_kilobits_per_sec(400);
+        estimator.reseed_bandwidth_estimate(DataRate::from_kilobits_per_sec(900));
+        let r = estimator.loss_based_result;
+        assert_eq!(r.state, LossBasedState::Decreasing);
+        assert_eq!(r.bandwidth_estimate, DataRate::from_kilobits_per_sec(400));
+        assert_eq!(
+            estimator.current_best_estimate.loss_limited_bandwidth,
+            DataRate::from_kilobits_per_sec(400)
+        );
     }
 
     #[test]

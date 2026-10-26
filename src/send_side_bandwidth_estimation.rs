@@ -591,6 +591,12 @@ impl SendSideBandwidthEstimation {
         assert!(bitrate > DataRate::zero());
         // Reset to avoid being capped by the estimate.
         self.delay_based_limit = DataRate::plus_infinity();
+        // The loss based estimate is a bound too: left at its old value it caps
+        // the target again at the next feedback.
+        if self.loss_based_bandwidth_estimator_v2_enabled() {
+            self.loss_based_bandwidth_estimator_v2
+                .reseed_bandwidth_estimate(bitrate);
+        }
         self.update_target_bitrate(bitrate, at_time);
         // Clear last sent bitrate history so the new value can be used directly
         // and not capped.
